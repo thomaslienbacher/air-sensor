@@ -1,6 +1,7 @@
 #define LED_BUILTIN 2
 
 #include <Arduino.h>
+#include <SoftwareSerial.h>
 #include <Bme280.h>
 
 #include <WiFi.h>
@@ -8,6 +9,7 @@
 #include <NTPClient.h>
 
 #include <InfluxDbClient.h>
+
 
 #include "config.h"
 
@@ -49,27 +51,63 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n\
 InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, ca_root_cert_ISRG_Root_X1);
 
 // Declare Data point
-Point data_point("atmosphere");
+Point data_point("air");
 
 Bme280TwoWire sensor;
 WiFiMulti wiFiMulti;
+SoftwareSerial lcd(14, 13);
 
 uint16_t counter = 0;
 
 void clear_lcd() {
-  Serial.write(0xFE);  //command flag
-  Serial.write(0x01);  //clear command.
+  lcd.write(0xFE);  //command flag
+  lcd.write(0x01);  //clear command.
 }
 
 void set_cusor_pos(int row, int col) {
-  Serial.write(0xFE);
-  Serial.write(col + row * 64 + 128);
+  lcd.write(0xFE);
+  lcd.write(col + row * 64 + 128);
+}
+
+void connect_to_wifi() {
+  Serial.println("Trying to connect to Wifi...");
+  
+  clear_lcd();
+  set_cusor_pos(1, 0);
+  lcd.print("Wifi...");
+  clear_lcd();
+  set_cusor_pos(1, 0);
+  int i = 0;
+
+  // wait for WiFi connection
+  while ((wiFiMulti.run() != WL_CONNECTED)) {
+    Serial.print(".");
+    lcd.print(".,:"[i % 3]);
+    i++;
+  }
+
+  Serial.println("Connected to Wifi");
+  Serial.println("IP addr:");
+  Serial.println(WiFi.localIP());
+
+  // display new ip
+  clear_lcd();
+  set_cusor_pos(0, 0);
+  lcd.print("IP addr:");
+  set_cusor_pos(1, 0);
+  lcd.print(WiFi.localIP());
+  delay(3000);
 }
 
 void setup() {
+  // this is the esp32 default
+  Serial.begin(115200);
+
   // lcd / serial begin
-  Serial.begin(9600);
+  lcd.begin(9600);
   clear_lcd();
+  set_cusor_pos(0, 0);
+  lcd.print("Booting...");
 
   // sensor begin
   Wire.begin(17, 16);  // SDA, SCL
@@ -80,24 +118,15 @@ void setup() {
   WiFi.mode(WIFI_STA);
   wiFiMulti.addAP(WIFI_SSID, WIFI_PSK);
 
-  // wait for WiFi connection
-  Serial.print("WiFi...");
-  while ((wiFiMulti.run() != WL_CONNECTED)) {
-    Serial.print(".");
-  }
-  Serial.println(" connected");
+  connect_to_wifi();
 
   clear_lcd();
   set_cusor_pos(0, 0);
-  Serial.print("IP addr:");
-  set_cusor_pos(1, 0);
-  Serial.print(WiFi.localIP());
-  delay(2500);
-  clear_lcd();
+  lcd.print("Sync time...");
 
   // ntp
   timeSync(TZ_INFO, "0.at.pool.ntp.org", "1.at.pool.ntp.org", "2.at.pool.ntp.org");
-  data_point.addTag("location", "table-test");
+  data_point.addTag("location", "kitchen-test");
   clear_lcd();
 
   // influx client
@@ -108,7 +137,7 @@ void setup() {
   wo.bufferSize(30);
 
   HTTPOptions ho;
-  ho.httpReadTimeout(10 * 1000); // specified in milli seconds
+  ho.httpReadTimeout(10 * 1000);  // specified in milli seconds
   ho.connectionReuse(true);
 
   client.setWriteOptions(wo);
@@ -116,41 +145,50 @@ void setup() {
 }
 
 void loop() {
-  // TODO: check if still connected to wifi and reconnect
-  while ((wiFiMulti.run() != WL_CONNECTED)) {
-    Serial.print(".");
+  if (WiFi.status() != WL_CONNECTED) {
+    connect_to_wifi();
   }
 
   float temp = sensor.getTemperature();   // celsius
   float pressure = sensor.getPressure();  // pascal
   float humidity = sensor.getHumidity();  // percent
+  char buffer[100];
+  snprintf(buffer, 100, "temp = %f, pressure = %f, humidity = %f", temp, pressure, humidity);
+  Serial.println(buffer);
 
   data_point.clearFields();
   data_point.addField("temp", temp);
   data_point.addField("pressure", pressure);
   data_point.addField("humidity", humidity);
+
   if (!client.writePoint(data_point)) {
     Serial.print("InfluxDB write failed: ");
+    Serial.println();
+    
     clear_lcd();
     set_cusor_pos(0, 0);
-    Serial.println(client.getLastErrorMessage());
-    delay(5000);
+    lcd.print("Write failed!");
+    set_cusor_pos(1, 0);
+    lcd.print(client.getLastErrorMessage());
+    
+    delay(3000);
+    ESP.restart();
   }
 
   clear_lcd();
   char line[20] = { 0 };
   snprintf(line, 20, "%02.2f C  %3.0f hPa", temp, pressure * 0.01);
   set_cusor_pos(0, 0);
-  Serial.print(line);
+  lcd.print(line);
 
   struct tm timeinfo;
   getLocalTime(&timeinfo);
-  
+
   char spinner[] = " -+*";
   snprintf(line, 20, "%02.2f %%  %02d:%02d %c", humidity, timeinfo.tm_hour, timeinfo.tm_min, spinner[counter % (sizeof(spinner) - 1)]);
   set_cusor_pos(1, 0);
-  Serial.print(line);
-  delay(3000);
+  lcd.print(line);
+  delay(2000);
 
   counter++;
 }
