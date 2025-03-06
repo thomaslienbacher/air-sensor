@@ -10,7 +10,6 @@
 
 #include <InfluxDbClient.h>
 
-
 #include "config.h"
 
 #define TZ_INFO "CEST-1CET,M3.2.0/2:00:00,M11.1.0/2:00:00"
@@ -71,11 +70,10 @@ void set_cusor_pos(int row, int col) {
 
 void connect_to_wifi() {
   Serial.println("Trying to connect to Wifi...");
-  
+
   clear_lcd();
-  set_cusor_pos(1, 0);
+  set_cusor_pos(0, 0);
   lcd.print("Wifi...");
-  clear_lcd();
   set_cusor_pos(1, 0);
   int i = 0;
 
@@ -100,14 +98,17 @@ void connect_to_wifi() {
 }
 
 void setup() {
-  // this is the esp32 default
-  Serial.begin(115200);
-
   // lcd / serial begin
   lcd.begin(9600);
   clear_lcd();
   set_cusor_pos(0, 0);
-  lcd.print("Booting...");
+  lcd.print("Booting... Loc:");
+  set_cusor_pos(1, 0);
+  lcd.print(LOCATION);
+
+  // this is the esp32 default
+  Serial.begin(115200);
+  Serial.println("Compiled on " __TIMESTAMP__);
 
   // sensor begin
   Wire.begin(17, 16);  // SDA, SCL
@@ -126,18 +127,18 @@ void setup() {
 
   // ntp
   timeSync(TZ_INFO, "0.at.pool.ntp.org", "1.at.pool.ntp.org", "2.at.pool.ntp.org");
-  data_point.addTag("location", "kitchen-test");
+  data_point.addTag("location", LOCATION);
   clear_lcd();
 
   // influx client
   WriteOptions wo;
-  wo.maxRetryAttempts(10);
+  wo.maxRetryAttempts(5);
   wo.maxRetryInterval(150);
   wo.flushInterval(20);
   wo.bufferSize(30);
 
   HTTPOptions ho;
-  ho.httpReadTimeout(10 * 1000);  // specified in milli seconds
+  ho.httpReadTimeout(5 * 1000);  // specified in milli seconds
   ho.connectionReuse(true);
 
   client.setWriteOptions(wo);
@@ -159,19 +160,20 @@ void loop() {
   data_point.clearFields();
   data_point.addField("temp", temp);
   data_point.addField("pressure", pressure);
+  // one of my sensors has a ~20% bias on humidity because of mishap while cleaning the soldering :( 
   data_point.addField("humidity", humidity);
 
   if (!client.writePoint(data_point)) {
     Serial.print("InfluxDB write failed: ");
     Serial.println();
-    
+
     clear_lcd();
     set_cusor_pos(0, 0);
     lcd.print("Write failed!");
     set_cusor_pos(1, 0);
     lcd.print(client.getLastErrorMessage());
-    
-    delay(3000);
+
+    delay(2000);
     ESP.restart();
   }
 
